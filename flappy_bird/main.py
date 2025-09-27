@@ -5,6 +5,7 @@ Replace this file with later milestones as we add features.
 """
 import os
 import sys
+import random  # for pipe gap positioning
 import pygame
 
 # --- Constants ---
@@ -113,7 +114,7 @@ class Pipe:
         self.x = float(x)
         
         # Randomly position the gap
-        gap_y = pygame.random.randint(
+        gap_y = random.randint(
             PIPE_MIN_HEIGHT + PIPE_GAP,
             GROUND_Y - PIPE_MIN_HEIGHT - PIPE_GAP
         )
@@ -241,8 +242,12 @@ def main():
         # Update pipes and spawn new ones
         time_since_last_pipe += dt
         if time_since_last_pipe >= PIPE_SPAWN_DELAY:
-            pipes.append(Pipe())
-            time_since_last_pipe = 0.0
+            try:
+                pipes.append(Pipe())
+                time_since_last_pipe = 0.0
+            except Exception as e:
+                print(f"Failed to create pipe: {e}")
+                time_since_last_pipe = PIPE_SPAWN_DELAY  # Try again next frame
             
         # Update and filter out off-screen pipes
         pipes = [pipe for pipe in pipes if not pipe.is_offscreen()]
