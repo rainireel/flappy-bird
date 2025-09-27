@@ -163,7 +163,6 @@ MEDAL_SCORES = [
     (5, "Bronze", BRONZE)
 ]
 
-
 # Animation
 BIRD_IDLE_RANGE = 20  # pixels up/down
 BIRD_IDLE_SPEED = 2   # complete cycles per second
@@ -173,7 +172,6 @@ GROUND_HEIGHT = 112
 GROUND_Y = SCREEN_HEIGHT - GROUND_HEIGHT
 # Keep pipes below this HUD area to avoid overlapping score/title
 HUD_TOP_MARGIN = 68
-
 
 def load_high_score():
     """Load the high score from score.txt."""
@@ -217,19 +215,37 @@ class Bird:
         self.y = float(y)
         self.start_y = float(y)  # For menu animation
         self.vel = 0.0  # pixels per second (positive downward)
-        self.width = BIRD_WIDTH
-        self.height = BIRD_HEIGHT
-        self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
-        self.animation_time = 0.0  # For menu idle animation
-        # Try to load an image from assets if present (optional)
-        self.image = None
+        
+        self.frames = []
+        self.current_frame = 0
+        self.animation_speed = 10 # frames per second
+        self.animation_time = 0.0
+
         try:
-            img_path = os.path.join(ASSETS_DIR, "bird1.png")
-            if os.path.exists(img_path):
-                self.image = pygame.image.load(img_path).convert_alpha()
-                self.image = pygame.transform.scale(self.image, (self.width, self.height))
-        except Exception:
+            spritesheet = pygame.image.load(os.path.join(ASSETS_DIR, "bird1.png")).convert_alpha()
+            
+            # Assuming 3 frames in a horizontal strip
+            frame_width = spritesheet.get_width() // 3
+            frame_height = spritesheet.get_height()
+            
+            scale_factor = 2
+            self.width = int(frame_width * scale_factor)
+            self.height = int(frame_height * scale_factor)
+
+            for i in range(3):
+                frame = spritesheet.subsurface(pygame.Rect(i * frame_width, 0, frame_width, frame_height))
+                frame = pygame.transform.scale(frame, (self.width, self.height))
+                self.frames.append(frame)
+            
+            self.image = self.frames[0]
+
+        except Exception as e:
+            print(f"Failed to load bird spritesheet: {e}")
             self.image = None
+            self.width = BIRD_WIDTH
+            self.height = BIRD_HEIGHT
+
+        self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
     def update_menu(self, dt):
         """Update bird's menu idle animation."""
@@ -241,6 +257,13 @@ class Bird:
 
     def update(self, dt):
         """Update bird physics. dt is seconds since last frame."""
+        # Animate the bird
+        self.animation_time += dt
+        if self.animation_time > 1 / self.animation_speed:
+            self.current_frame = (self.current_frame + 1) % len(self.frames)
+            self.image = self.frames[self.current_frame]
+            self.animation_time = 0
+
         # Integrate gravity
         self.vel += GRAVITY * dt
         if self.vel > MAX_FALL_SPEED:
@@ -350,19 +373,11 @@ class Pipe:
     def draw(self, surface):
         if self.image:
             # Draw top pipe (flipped)
-            scaled_image = pygame.transform.scale(
-                self.image,
-                (PIPE_WIDTH, self.top_rect.height)
-            )
-            flipped_image = pygame.transform.flip(scaled_image, False, True)
-            surface.blit(flipped_image, self.top_rect)
-            
+            flipped_image = pygame.transform.flip(self.image, False, True)
+            surface.blit(flipped_image, (self.top_rect.x, self.top_rect.bottom - flipped_image.get_height()))
+
             # Draw bottom pipe
-            scaled_image = pygame.transform.scale(
-                self.image,
-                (PIPE_WIDTH, self.bottom_rect.height)
-            )
-            surface.blit(scaled_image, self.bottom_rect)
+            surface.blit(self.image, self.bottom_rect.topleft)
         else:
             # Placeholder: green rectangles with black borders
             pygame.draw.rect(surface, PIPE_COLOR, self.top_rect)
