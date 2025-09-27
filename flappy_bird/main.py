@@ -38,6 +38,11 @@ GAME_OVER = 'game_over'
 # Colors
 RED = (255, 0, 0)
 WHITE = (255, 255, 255)
+YELLOW = (255, 215, 0)  # Score color
+
+# Scoring
+SCORE_FONT_SIZE = 48
+DEBUG_FONT_SIZE = 24
 
 # Ground
 GROUND_HEIGHT = 112
@@ -144,6 +149,7 @@ class Pipe:
     """A pair of pipes (top and bottom) that move left across the screen."""
     def __init__(self, x=SCREEN_WIDTH):
         self.x = float(x)
+        self.scored = False  # Flag to ensure we only score once per pipe
         
         # Randomly position the gap
         gap_y = random.randint(
@@ -241,26 +247,32 @@ def main():
         print("Failed to initialize pygame:", e)
         sys.exit(1)
 
-    # Simple font for on-screen instructions
-    font = pygame.font.SysFont(None, 24)
-    title_surf = font.render("PyFlappy — Step 6 (Collisions)", True, WHITE)
-    instr_surf = font.render("Press SPACE to flap, collide to die!", True, WHITE)
-    game_over_surf = font.render("Game Over! Press SPACE to restart", True, RED)
+    # Fonts for different purposes
+    title_font = pygame.font.SysFont(None, DEBUG_FONT_SIZE)
+    score_font = pygame.font.SysFont(None, SCORE_FONT_SIZE)
+    
+    # Static text surfaces
+    title_surf = title_font.render("PyFlappy — Step 7 (Scoring)", True, WHITE)
+    instr_surf = title_font.render("Press SPACE to flap! Score points by passing pipes!", True, WHITE)
+    game_over_surf = title_font.render("Game Over! Press SPACE to restart", True, RED)
 
     def reset_game():
         """Reset the game state for a new attempt."""
-        nonlocal bird, pipes, time_since_last_pipe, game_state
+        nonlocal bird, pipes, time_since_last_pipe, game_state, current_score
         bird = Bird()
         pipes = []
         time_since_last_pipe = 0.0
         game_state = GAME_RUNNING
+        current_score = 0
 
-    # Create game objects
+    # Create game objects and score tracking
     bird = Bird()
     ground = Ground()
     pipes = []  # List to hold active pipes
     time_since_last_pipe = 0.0  # Timer for pipe spawning
     game_state = GAME_RUNNING
+    current_score = 0
+    best_score = 0  # Best score this session
 
     running = True
     last_time = pygame.time.get_ticks() / 1000.0
@@ -298,6 +310,14 @@ def main():
                 except Exception as e:
                     print(f"Failed to create pipe: {e}")
                     time_since_last_pipe = PIPE_SPAWN_DELAY  # Try again next frame
+
+            # Check for score increases
+            for pipe in pipes:
+                if not pipe.scored and pipe.x + PIPE_WIDTH < bird.x:
+                    current_score += 1
+                    pipe.scored = True  # Mark as scored
+                    if current_score > best_score:
+                        best_score = current_score
                 
             # Update and filter out off-screen pipes
             pipes = [pipe for pipe in pipes if not pipe.is_offscreen()]
@@ -311,18 +331,30 @@ def main():
         bird.draw(screen, game_state)
         ground.draw(screen)  # Ground always on top
 
-        # UI text on top of everything
+        # Score display (centered, large)
+        score_text = str(current_score)
+        score_surf = score_font.render(score_text, True, YELLOW)
+        score_rect = score_surf.get_rect(center=(SCREEN_WIDTH // 2, 50))
+        screen.blit(score_surf, score_rect)
+
+        # UI text
         screen.blit(title_surf, (12, 12))
         if game_state == GAME_RUNNING:
-            screen.blit(instr_surf, (12, 36))
+            screen.blit(instr_surf, (12, SCREEN_HEIGHT - 36))
         else:  # GAME_OVER
-            screen.blit(game_over_surf, (12, 36))
+            # Show game over text and best score
+            screen.blit(game_over_surf, (12, 100))
+            best_score_surf = title_font.render(f"Best Score: {best_score}", True, YELLOW)
+            screen.blit(best_score_surf, (12, 140))
 
-        # debug: show assets and sounds folder names and FPS
-        debug_surf = font.render(f"assets: {os.path.basename(ASSETS_DIR)}  sounds: {os.path.basename(SOUNDS_DIR)}", True, (240, 240, 240))
-        fps_surf = font.render(f"FPS: {int(clock.get_fps())}", True, (240, 240, 240))
+        # Debug info at bottom
+        debug_surf = title_font.render(
+            f"assets: {os.path.basename(ASSETS_DIR)}  sounds: {os.path.basename(SOUNDS_DIR)}", 
+            True, (240, 240, 240)
+        )
+        fps_surf = title_font.render(f"FPS: {int(clock.get_fps())}", True, (240, 240, 240))
         screen.blit(debug_surf, (12, SCREEN_HEIGHT - 36))
-        screen.blit(fps_surf, (12, SCREEN_HEIGHT - 18))
+        screen.blit(fps_surf, (SCREEN_WIDTH - 100, SCREEN_HEIGHT - 36))
 
         pygame.display.flip()
         clock.tick(FPS)
