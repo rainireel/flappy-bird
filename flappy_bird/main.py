@@ -22,6 +22,14 @@ GRAVITY = 800.0  # pixels per second^2 (tunable)
 MAX_FALL_SPEED = 1000.0
 FLAP_STRENGTH = 300.0  # initial upward velocity applied on flap (pixels/sec)
 
+# Pipe settings
+PIPE_WIDTH = 52
+PIPE_GAP = 100  # vertical gap between pipes
+PIPE_SPEED = 120  # pixels per second
+PIPE_SPAWN_DELAY = 2.0  # seconds between pipe spawns
+PIPE_MIN_HEIGHT = 50  # minimum height of pipe
+PIPE_COLOR = (67, 176, 71)  # green color for pipes
+
 # Ground
 GROUND_HEIGHT = 112
 GROUND_Y = SCREEN_HEIGHT - GROUND_HEIGHT
@@ -35,7 +43,7 @@ def init_pygame():
     """Initialize pygame and return (screen, clock)."""
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("PyFlappy — Step 4")
+    pygame.display.set_caption("PyFlappy — Step 5")
     clock = pygame.time.Clock()
     return screen, clock
 
@@ -99,6 +107,76 @@ class Bird:
             pygame.draw.rect(surface, (255, 215, 0), self.rect)
             pygame.draw.rect(surface, (0, 0, 0), self.rect, 2)
 
+class Pipe:
+    """A pair of pipes (top and bottom) that move left across the screen."""
+    def __init__(self, x=SCREEN_WIDTH):
+        self.x = float(x)
+        
+        # Randomly position the gap
+        gap_y = pygame.random.randint(
+            PIPE_MIN_HEIGHT + PIPE_GAP,
+            GROUND_Y - PIPE_MIN_HEIGHT - PIPE_GAP
+        )
+        
+        # Create the top and bottom pipe rectangles
+        self.top_rect = pygame.Rect(
+            int(self.x),
+            0,
+            PIPE_WIDTH,
+            gap_y - PIPE_GAP // 2
+        )
+        
+        self.bottom_rect = pygame.Rect(
+            int(self.x),
+            gap_y + PIPE_GAP // 2,
+            PIPE_WIDTH,
+            GROUND_Y - (gap_y + PIPE_GAP // 2)
+        )
+        
+        # Optional: Load pipe image
+        self.image = None
+        try:
+            img_path = os.path.join(ASSETS_DIR, "pipe.png")
+            if os.path.exists(img_path):
+                self.image = pygame.image.load(img_path).convert_alpha()
+                # We'll need to scale and flip for top pipe
+        except Exception:
+            self.image = None
+    
+    def update(self, dt):
+        """Move pipe left at constant speed."""
+        self.x -= PIPE_SPEED * dt
+        self.top_rect.x = int(self.x)
+        self.bottom_rect.x = int(self.x)
+    
+    def is_offscreen(self):
+        """Return True if pipe has moved completely off the left side."""
+        return self.x + PIPE_WIDTH < 0
+    
+    def draw(self, surface):
+        if self.image:
+            # Draw top pipe (flipped)
+            scaled_image = pygame.transform.scale(
+                self.image,
+                (PIPE_WIDTH, self.top_rect.height)
+            )
+            flipped_image = pygame.transform.flip(scaled_image, False, True)
+            surface.blit(flipped_image, self.top_rect)
+            
+            # Draw bottom pipe
+            scaled_image = pygame.transform.scale(
+                self.image,
+                (PIPE_WIDTH, self.bottom_rect.height)
+            )
+            surface.blit(scaled_image, self.bottom_rect)
+        else:
+            # Placeholder: green rectangles with black borders
+            pygame.draw.rect(surface, PIPE_COLOR, self.top_rect)
+            pygame.draw.rect(surface, (0, 0, 0), self.top_rect, 2)
+            pygame.draw.rect(surface, PIPE_COLOR, self.bottom_rect)
+            pygame.draw.rect(surface, (0, 0, 0), self.bottom_rect, 2)
+
+
 class Ground:
     """A simple static ground for rendering and collision."""
     def __init__(self):
@@ -132,12 +210,14 @@ def main():
 
     # Simple font for on-screen instructions
     font = pygame.font.SysFont(None, 24)
-    title_surf = font.render("PyFlappy — Step 4 (Ground Collision)", True, (255, 255, 255))
-    instr_surf = font.render("Press SPACE to flap. Bird stops at ground.", True, (255, 255, 255))
+    title_surf = font.render("PyFlappy — Step 5 (Pipes)", True, (255, 255, 255))
+    instr_surf = font.render("Press SPACE to flap. Pipes scroll left.", True, (255, 255, 255))
 
-    # Create instances (Step 4)
+    # Create game objects
     bird = Bird()
     ground = Ground()
+    pipes = []  # List to hold active pipes
+    time_since_last_pipe = 0.0  # Timer for pipe spawning
 
     running = True
     last_time = pygame.time.get_ticks() / 1000.0
@@ -157,11 +237,24 @@ def main():
 
         # Update
         bird.update(dt)
+        
+        # Update pipes and spawn new ones
+        time_since_last_pipe += dt
+        if time_since_last_pipe >= PIPE_SPAWN_DELAY:
+            pipes.append(Pipe())
+            time_since_last_pipe = 0.0
+            
+        # Update and filter out off-screen pipes
+        pipes = [pipe for pipe in pipes if not pipe.is_offscreen()]
+        for pipe in pipes:
+            pipe.update(dt)
 
         # Drawing
         screen.fill(BG_COLOR)
+        for pipe in pipes:  # Draw pipes behind bird
+            pipe.draw(screen)
         bird.draw(screen)
-        ground.draw(screen) # Draw ground on top of background
+        ground.draw(screen)  # Ground always on top
 
         # UI text on top of everything
         screen.blit(title_surf, (12, 12))
