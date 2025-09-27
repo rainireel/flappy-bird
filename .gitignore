@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Virtual Environment
+venv/
+env/
+.env/
+
+# OS specific
+.DS_Store
+Thumbs.db
