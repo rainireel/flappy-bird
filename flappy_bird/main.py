@@ -5,8 +5,110 @@ Replace this file with later milestones as we add features.
 """
 import os
 import sys
+import math
 import random  # for pipe gap positioning
 import pygame
+
+# Paths (defined early to avoid reference-order issues)
+ROOT = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(ROOT, "assets")
+SOUNDS_DIR = os.path.join(ROOT, "sounds")
+SCORE_FILE = os.path.join(ROOT, "score.txt")
+
+# Optional pixel font support
+FONTS_DIR = os.path.join(ASSETS_DIR, "fonts")
+FONT_CANDIDATES = [
+    # Common file names to look for (place in assets/fonts/)
+    "StardewValley.ttf",
+    "Stardew_Valley.ttf",
+    "stardewvalley.ttf",
+    "Stardew-Valley.ttf",
+    "PressStart2P.ttf",
+    "PressStart2P-Regular.ttf",
+    "Press_Start_2P.ttf",
+    "Press_Start_2P-Regular.ttf",
+    "Joystix.ttf",
+    "joystix monospace.ttf",
+    "PixelOperator.ttf",
+    "PixelOperator8.ttf",
+]
+
+FONT_AA = False  # Disable antialiasing for crisp pixel look
+SHADOW_OFFSET = (1, 1)
+
+def find_font_file():
+    """Return a path to a pixel font TTF if available, otherwise None.
+    Look in assets/ and assets/fonts/ for common pixel font filenames.
+    """
+    search_dirs = [ASSETS_DIR, FONTS_DIR]
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for name in FONT_CANDIDATES:
+            p = os.path.join(d, name)
+            if os.path.exists(p):
+                return p
+    return None
+
+FONT_PATH = find_font_file()
+
+def get_font(size):
+    """Load the pixel font if available, else fallback to a retro-like sysfont."""
+    if FONT_PATH:
+        try:
+            return pygame.font.Font(FONT_PATH, size)
+        except Exception:
+            pass
+    # Fallbacks: try some mono/retro system fonts in order
+    fallback_names = [
+        "stardew valley", "pressstart2p", "joystix monospace", "joystix", "m6x11", "vt323", "menlo", "monaco", "couriernew", "courier", "monospace"
+    ]
+    for name in fallback_names:
+        try:
+            f = pygame.font.SysFont(name, size)
+            if f:
+                try:
+                    f.set_bold(True)
+                except Exception:
+                    pass
+                return f
+        except Exception:
+            continue
+    # Last resort: default font
+    return pygame.font.SysFont(None, size)
+
+def render_text(text, font, color, shadow=True, outline=0, outline_color=(0, 0, 0)):
+    """Render text with optional drop shadow and pixel outline for a bold, readable look.
+    outline: integer pixels of outline thickness (0 for none).
+    """
+    main = font.render(text, FONT_AA, color).convert_alpha()
+
+    # Prepare base surface size
+    extra_w = abs(SHADOW_OFFSET[0]) if shadow else 0
+    extra_h = abs(SHADOW_OFFSET[1]) if shadow else 0
+    pad = max(0, outline)
+    w = main.get_width() + extra_w + pad * 2
+    h = main.get_height() + extra_h + pad * 2
+    out = pygame.Surface((w, h), pygame.SRCALPHA)
+
+    # Outline pass
+    if outline > 0:
+        outline_surf = font.render(text, FONT_AA, outline_color).convert_alpha()
+        # 8-directional outline for chunky pixel border
+        for dx in range(-outline, outline + 1):
+            for dy in range(-outline, outline + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                out.blit(outline_surf, (pad + dx, pad + dy))
+
+    # Shadow pass (drawn after outline to peek outside)
+    if shadow:
+        shadow_surf = font.render(text, FONT_AA, (0, 0, 0)).convert_alpha()
+        out.blit(shadow_surf, (pad + SHADOW_OFFSET[0], pad + SHADOW_OFFSET[1]))
+
+    # Main text
+    out.blit(main, (pad, pad))
+    return out
 
 # --- Constants ---
 SCREEN_WIDTH = 288
@@ -32,6 +134,8 @@ PIPE_MIN_HEIGHT = 50  # minimum height of pipe
 PIPE_COLOR = (67, 176, 71)  # green color for pipes
 
 # Game states
+GAME_MENU = 'menu'      # Initial menu state
+GAME_READY = 'ready'    # Bird is visible, waiting for first flap
 GAME_RUNNING = 'running'
 GAME_OVER = 'game_over'
 
@@ -39,19 +143,60 @@ GAME_OVER = 'game_over'
 RED = (255, 0, 0)
 WHITE = (255, 255, 255)
 YELLOW = (255, 215, 0)  # Score color
+BLACK = (0, 0, 0)
+BRONZE = (205, 127, 50)
+SILVER = (192, 192, 192)
+GOLD = (255, 215, 0)
+PLATINUM = (229, 228, 226)
 
-# Scoring
-SCORE_FONT_SIZE = 48
-DEBUG_FONT_SIZE = 24
+# Fonts
+TITLE_FONT_SIZE = 34
+SCORE_FONT_SIZE = 40
+MENU_FONT_SIZE = 18
+DEBUG_FONT_SIZE = 14
+
+# Medal thresholds
+MEDAL_SCORES = [
+    (30, "Platinum", PLATINUM),
+    (20, "Gold", GOLD),
+    (10, "Silver", SILVER),
+    (5, "Bronze", BRONZE)
+]
+
+
+# Animation
+BIRD_IDLE_RANGE = 20  # pixels up/down
+BIRD_IDLE_SPEED = 2   # complete cycles per second
 
 # Ground
 GROUND_HEIGHT = 112
 GROUND_Y = SCREEN_HEIGHT - GROUND_HEIGHT
+# Keep pipes below this HUD area to avoid overlapping score/title
+HUD_TOP_MARGIN = 68
 
-# Paths
-ROOT = os.path.dirname(__file__)
-ASSETS_DIR = os.path.join(ROOT, "assets")
-SOUNDS_DIR = os.path.join(ROOT, "sounds")
+
+def load_high_score():
+    """Load the high score from score.txt."""
+    try:
+        with open(SCORE_FILE, 'r') as f:
+            return int(f.read().strip())
+    except (IOError, ValueError):
+        return 0
+
+def save_high_score(score):
+    """Save the high score to score.txt."""
+    try:
+        with open(SCORE_FILE, 'w') as f:
+            f.write(str(score))
+    except IOError:
+        print(f"Warning: Could not save high score to {SCORE_FILE}")
+
+def get_medal(score):
+    """Return (medal_name, color) tuple based on score, or None if no medal."""
+    for threshold, name, color in MEDAL_SCORES:
+        if score >= threshold:
+            return name, color
+    return None
 
 def init_pygame():
     """Initialize pygame and return (screen, clock)."""
@@ -70,10 +215,12 @@ class Bird:
     def __init__(self, x=BIRD_START_X, y=BIRD_START_Y):
         self.x = float(x)
         self.y = float(y)
+        self.start_y = float(y)  # For menu animation
         self.vel = 0.0  # pixels per second (positive downward)
         self.width = BIRD_WIDTH
         self.height = BIRD_HEIGHT
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
+        self.animation_time = 0.0  # For menu idle animation
         # Try to load an image from assets if present (optional)
         self.image = None
         try:
@@ -83,6 +230,14 @@ class Bird:
                 self.image = pygame.transform.scale(self.image, (self.width, self.height))
         except Exception:
             self.image = None
+
+    def update_menu(self, dt):
+        """Update bird's menu idle animation."""
+        self.animation_time += dt * BIRD_IDLE_SPEED
+        # Smooth sine wave animation
+        offset = math.sin(self.animation_time * 2 * math.pi) * BIRD_IDLE_RANGE
+        self.y = self.start_y + offset
+        self.rect.y = int(self.y)
 
     def update(self, dt):
         """Update bird physics. dt is seconds since last frame."""
@@ -153,7 +308,7 @@ class Pipe:
         
         # Randomly position the gap
         gap_y = random.randint(
-            PIPE_MIN_HEIGHT + PIPE_GAP,
+            max(PIPE_MIN_HEIGHT + PIPE_GAP, HUD_TOP_MARGIN + PIPE_GAP // 2),
             GROUND_Y - PIPE_MIN_HEIGHT - PIPE_GAP
         )
         
@@ -247,22 +402,26 @@ def main():
         print("Failed to initialize pygame:", e)
         sys.exit(1)
 
-    # Fonts for different purposes
-    title_font = pygame.font.SysFont(None, DEBUG_FONT_SIZE)
-    score_font = pygame.font.SysFont(None, SCORE_FONT_SIZE)
+    # Fonts for different purposes (pixel font if available)
+    title_font = get_font(TITLE_FONT_SIZE)
+    menu_font = get_font(MENU_FONT_SIZE)
+    score_font = get_font(SCORE_FONT_SIZE)
+    debug_font = get_font(DEBUG_FONT_SIZE)
     
-    # Static text surfaces
-    title_surf = title_font.render("PyFlappy — Step 7 (Scoring)", True, WHITE)
-    instr_surf = title_font.render("Press SPACE to flap! Score points by passing pipes!", True, WHITE)
-    game_over_surf = title_font.render("Game Over! Press SPACE to restart", True, RED)
+    # Static text surfaces (rendered with shadow for contrast)
+    title_surf = render_text("PyFlappy", title_font, WHITE, shadow=False, outline=1)
+    menu_surf = render_text("Press SPACE to Start", menu_font, WHITE, shadow=False, outline=1)
+    ready_surf = render_text("READY! Press SPACE to Flap!", menu_font, WHITE, shadow=False, outline=1)
+    game_over_surf = render_text("Game Over! Press SPACE to Restart", menu_font, (240, 80, 80), shadow=False, outline=1)
+    menu_quit_surf = render_text("ESC to Quit", debug_font, WHITE, shadow=False, outline=1)
 
-    def reset_game():
+    def reset_game(to_menu=False):
         """Reset the game state for a new attempt."""
         nonlocal bird, pipes, time_since_last_pipe, game_state, current_score
         bird = Bird()
         pipes = []
         time_since_last_pipe = 0.0
-        game_state = GAME_RUNNING
+        game_state = GAME_MENU if to_menu else GAME_READY
         current_score = 0
 
     # Create game objects and score tracking
@@ -270,9 +429,9 @@ def main():
     ground = Ground()
     pipes = []  # List to hold active pipes
     time_since_last_pipe = 0.0  # Timer for pipe spawning
-    game_state = GAME_RUNNING
+    game_state = GAME_MENU  # Start in menu state
     current_score = 0
-    best_score = 0  # Best score this session
+    best_score = load_high_score()  # Load the all-time best score
 
     running = True
     last_time = pygame.time.get_ticks() / 1000.0
@@ -288,18 +447,29 @@ def main():
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_SPACE:
-                    if game_state == GAME_RUNNING:
+                    if game_state == GAME_MENU:
+                        game_state = GAME_READY
+                    elif game_state == GAME_READY:
+                        game_state = GAME_RUNNING
+                        bird.flap()  # Initial flap
+                    elif game_state == GAME_RUNNING:
                         bird.flap()
                     elif game_state == GAME_OVER:
-                        reset_game()
+                        reset_game(to_menu=True)
 
-        # Update game objects if game is running
-        if game_state == GAME_RUNNING:
+        # Update game objects based on state
+        if game_state == GAME_MENU or game_state == GAME_READY:
+            bird.update_menu(dt)
+        elif game_state == GAME_RUNNING:
             bird.update(dt)
             
             # Check for collisions
             if bird.check_collision(pipes, ground):
                 game_state = GAME_OVER
+                # Update and save high score if needed
+                if current_score > best_score:
+                    best_score = current_score
+                    save_high_score(best_score)
             
             # Update pipes and spawn new ones
             time_since_last_pipe += dt
@@ -331,28 +501,86 @@ def main():
         bird.draw(screen, game_state)
         ground.draw(screen)  # Ground always on top
 
-        # Score display (centered, large)
-        score_text = str(current_score)
-        score_surf = score_font.render(score_text, True, YELLOW)
-        score_rect = score_surf.get_rect(center=(SCREEN_WIDTH // 2, 50))
-        screen.blit(score_surf, score_rect)
+        # Always show title at top
+        title_rect = title_surf.get_rect(midtop=(SCREEN_WIDTH // 2, 6))
+        screen.blit(title_surf, title_rect)
 
-        # UI text
-        screen.blit(title_surf, (12, 12))
-        if game_state == GAME_RUNNING:
-            screen.blit(instr_surf, (12, SCREEN_HEIGHT - 36))
-        else:  # GAME_OVER
-            # Show game over text and best score
-            screen.blit(game_over_surf, (12, 100))
-            best_score_surf = title_font.render(f"Best Score: {best_score}", True, YELLOW)
-            screen.blit(best_score_surf, (12, 140))
+        # State-specific UI
+        if game_state == GAME_MENU:
+            # Center the "Press SPACE to Start" text
+            menu_rect = menu_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+            screen.blit(menu_surf, menu_rect)
+            # Show quit instruction at bottom
+            quit_rect = menu_quit_surf.get_rect(midbottom=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 20))
+            screen.blit(menu_quit_surf, quit_rect)
 
-        # Debug info at bottom
-        debug_surf = title_font.render(
-            f"assets: {os.path.basename(ASSETS_DIR)}  sounds: {os.path.basename(SOUNDS_DIR)}", 
-            True, (240, 240, 240)
+        elif game_state == GAME_READY:
+            ready_rect = ready_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+            screen.blit(ready_surf, ready_rect)
+
+        elif game_state == GAME_RUNNING:
+            # Score display (centered, clean with shadow only)
+            score_text = str(current_score)
+            score_surf = render_text(score_text, score_font, YELLOW, shadow=False, outline=1)
+            score_rect = score_surf.get_rect(center=(SCREEN_WIDTH // 2, 48))
+            screen.blit(score_surf, score_rect)
+
+        elif game_state == GAME_OVER:
+            center_y = SCREEN_HEIGHT // 2
+
+            # Show game over text at top
+            game_over_rect = game_over_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y - 80))
+            screen.blit(game_over_surf, game_over_rect)
+            
+            # Show final and best scores (shadowed for contrast)
+            final_score_surf = render_text(f"Score: {current_score}", menu_font, WHITE, shadow=False, outline=1)
+            best_score_surf = render_text(f"Best: {best_score}", menu_font, YELLOW, shadow=False, outline=1)
+            
+            final_score_rect = final_score_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y - 20))
+            best_score_rect = best_score_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y + 20))
+            
+            screen.blit(final_score_surf, final_score_rect)
+            screen.blit(best_score_surf, best_score_rect)
+
+            # Show medal if earned
+            medal = get_medal(current_score)
+            if medal:
+                medal_name, medal_color = medal
+                medal_surf = render_text(f"{medal_name} Medal!", menu_font, medal_color, shadow=False, outline=1)
+                medal_rect = medal_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y + 60))
+                
+                # Draw medal circle background
+                circle_radius = 30
+                circle_pos = (medal_rect.centerx, medal_rect.centery + 40)
+                pygame.draw.circle(screen, medal_color, circle_pos, circle_radius)
+                pygame.draw.circle(screen, BLACK, circle_pos, circle_radius, 2)
+                
+                # Draw star or trophy in medal (simple version)
+                star_points = []
+                for i in range(5):
+                    angle = -math.pi/2 + (2*math.pi*i)/5
+                    x = circle_pos[0] + circle_radius*0.7 * math.cos(angle)
+                    y = circle_pos[1] + circle_radius*0.7 * math.sin(angle)
+                    star_points.append((int(x), int(y)))
+                pygame.draw.polygon(screen, BLACK, star_points, 2)
+                
+                screen.blit(medal_surf, medal_rect)
+
+        # Debug info at bottom-left
+        debug_surf = render_text(
+            f"assets: {os.path.basename(ASSETS_DIR)}  sounds: {os.path.basename(SOUNDS_DIR)}",
+            debug_font,
+            (240, 240, 240),
+            shadow=False,
+            outline=1,
         )
-        fps_surf = title_font.render(f"FPS: {int(clock.get_fps())}", True, (240, 240, 240))
+        fps_surf = render_text(
+            f"FPS: {int(clock.get_fps())}",
+            debug_font,
+            (240, 240, 240),
+            shadow=False,
+            outline=1,
+        )
         screen.blit(debug_surf, (12, SCREEN_HEIGHT - 36))
         screen.blit(fps_surf, (SCREEN_WIDTH - 100, SCREEN_HEIGHT - 36))
 
