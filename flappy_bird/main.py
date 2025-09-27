@@ -43,12 +43,27 @@ RED = (255, 0, 0)
 WHITE = (255, 255, 255)
 YELLOW = (255, 215, 0)  # Score color
 BLACK = (0, 0, 0)
+BRONZE = (205, 127, 50)
+SILVER = (192, 192, 192)
+GOLD = (255, 215, 0)
+PLATINUM = (229, 228, 226)
 
 # Fonts
 TITLE_FONT_SIZE = 48
 SCORE_FONT_SIZE = 64
 MENU_FONT_SIZE = 32
 DEBUG_FONT_SIZE = 20
+
+# Medal thresholds
+MEDAL_SCORES = [
+    (30, "Platinum", PLATINUM),
+    (20, "Gold", GOLD),
+    (10, "Silver", SILVER),
+    (5, "Bronze", BRONZE)
+]
+
+# File paths
+SCORE_FILE = os.path.join(ROOT, "score.txt")
 
 # Animation
 BIRD_IDLE_RANGE = 20  # pixels up/down
@@ -62,6 +77,30 @@ GROUND_Y = SCREEN_HEIGHT - GROUND_HEIGHT
 ROOT = os.path.dirname(__file__)
 ASSETS_DIR = os.path.join(ROOT, "assets")
 SOUNDS_DIR = os.path.join(ROOT, "sounds")
+SCORE_FILE = os.path.join(ROOT, "score.txt")
+
+def load_high_score():
+    """Load the high score from score.txt."""
+    try:
+        with open(SCORE_FILE, 'r') as f:
+            return int(f.read().strip())
+    except (IOError, ValueError):
+        return 0
+
+def save_high_score(score):
+    """Save the high score to score.txt."""
+    try:
+        with open(SCORE_FILE, 'w') as f:
+            f.write(str(score))
+    except IOError:
+        print(f"Warning: Could not save high score to {SCORE_FILE}")
+
+def get_medal(score):
+    """Return (medal_name, color) tuple based on score, or None if no medal."""
+    for threshold, name, color in MEDAL_SCORES:
+        if score >= threshold:
+            return name, color
+    return None
 
 def init_pygame():
     """Initialize pygame and return (screen, clock)."""
@@ -296,7 +335,7 @@ def main():
     time_since_last_pipe = 0.0  # Timer for pipe spawning
     game_state = GAME_MENU  # Start in menu state
     current_score = 0
-    best_score = 0  # Best score this session
+    best_score = load_high_score()  # Load the all-time best score
 
     running = True
     last_time = pygame.time.get_ticks() / 1000.0
@@ -331,6 +370,10 @@ def main():
             # Check for collisions
             if bird.check_collision(pipes, ground):
                 game_state = GAME_OVER
+                # Update and save high score if needed
+                if current_score > best_score:
+                    best_score = current_score
+                    save_high_score(best_score)
             
             # Update pipes and spawn new ones
             time_since_last_pipe += dt
@@ -387,19 +430,45 @@ def main():
             screen.blit(score_surf, score_rect)
 
         elif game_state == GAME_OVER:
-            # Show game over text
-            game_over_rect = game_over_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50))
+            center_y = SCREEN_HEIGHT // 2
+
+            # Show game over text at top
+            game_over_rect = game_over_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y - 80))
             screen.blit(game_over_surf, game_over_rect)
             
             # Show final and best scores
             final_score_surf = menu_font.render(f"Score: {current_score}", True, WHITE)
             best_score_surf = menu_font.render(f"Best: {best_score}", True, YELLOW)
             
-            final_score_rect = final_score_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 10))
-            best_score_rect = best_score_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50))
+            final_score_rect = final_score_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y - 20))
+            best_score_rect = best_score_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y + 20))
             
             screen.blit(final_score_surf, final_score_rect)
             screen.blit(best_score_surf, best_score_rect)
+
+            # Show medal if earned
+            medal = get_medal(current_score)
+            if medal:
+                medal_name, medal_color = medal
+                medal_surf = menu_font.render(f"{medal_name} Medal!", True, medal_color)
+                medal_rect = medal_surf.get_rect(center=(SCREEN_WIDTH // 2, center_y + 60))
+                
+                # Draw medal circle background
+                circle_radius = 30
+                circle_pos = (medal_rect.centerx, medal_rect.centery + 40)
+                pygame.draw.circle(screen, medal_color, circle_pos, circle_radius)
+                pygame.draw.circle(screen, BLACK, circle_pos, circle_radius, 2)
+                
+                # Draw star or trophy in medal (simple version)
+                star_points = []
+                for i in range(5):
+                    angle = -math.pi/2 + (2*math.pi*i)/5
+                    x = circle_pos[0] + circle_radius*0.7 * math.cos(angle)
+                    y = circle_pos[1] + circle_radius*0.7 * math.sin(angle)
+                    star_points.append((int(x), int(y)))
+                pygame.draw.polygon(screen, BLACK, star_points, 2)
+                
+                screen.blit(medal_surf, medal_rect)
 
         # Debug info at bottom-left
         debug_surf = debug_font.render(
