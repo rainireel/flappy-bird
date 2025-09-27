@@ -31,6 +31,14 @@ PIPE_SPAWN_DELAY = 2.0  # seconds between pipe spawns
 PIPE_MIN_HEIGHT = 50  # minimum height of pipe
 PIPE_COLOR = (67, 176, 71)  # green color for pipes
 
+# Game states
+GAME_RUNNING = 'running'
+GAME_OVER = 'game_over'
+
+# Colors
+RED = (255, 0, 0)
+WHITE = (255, 255, 255)
+
 # Ground
 GROUND_HEIGHT = 112
 GROUND_Y = SCREEN_HEIGHT - GROUND_HEIGHT
@@ -100,12 +108,36 @@ class Bird:
         # Negative velocity moves the bird upward because positive vel = down
         self.vel = -FLAP_STRENGTH
 
-    def draw(self, surface):
+    def check_collision(self, pipes, ground):
+        """Check if bird collides with pipes or ground."""
+        # Ground collision
+        if self.rect.bottom >= ground.rect.top:
+            return True
+            
+        # Pipe collision
+        for pipe in pipes:
+            if self.rect.colliderect(pipe.top_rect) or \
+               self.rect.colliderect(pipe.bottom_rect):
+                return True
+        
+        return False
+
+    def draw(self, surface, game_state):
+        """Draw the bird, with red tint if game over."""
         if self.image:
-            surface.blit(self.image, (int(self.x), int(self.y)))
+            if game_state == GAME_OVER:
+                # Create a red surface for tinting
+                red_surface = pygame.Surface(self.image.get_size()).convert_alpha()
+                red_surface.fill(RED)
+                temp_image = self.image.copy()
+                temp_image.blit(red_surface, (0,0), special_flags=pygame.BLEND_RGBA_MULT)
+                surface.blit(temp_image, (int(self.x), int(self.y)))
+            else:
+                surface.blit(self.image, (int(self.x), int(self.y)))
         else:
-            # placeholder: yellow rectangle with black border
-            pygame.draw.rect(surface, (255, 215, 0), self.rect)
+            # placeholder: yellow rectangle with black border (red if game over)
+            color = RED if game_state == GAME_OVER else (255, 215, 0)
+            pygame.draw.rect(surface, color, self.rect)
             pygame.draw.rect(surface, (0, 0, 0), self.rect, 2)
 
 class Pipe:
@@ -211,14 +243,24 @@ def main():
 
     # Simple font for on-screen instructions
     font = pygame.font.SysFont(None, 24)
-    title_surf = font.render("PyFlappy — Step 5 (Pipes)", True, (255, 255, 255))
-    instr_surf = font.render("Press SPACE to flap. Pipes scroll left.", True, (255, 255, 255))
+    title_surf = font.render("PyFlappy — Step 6 (Collisions)", True, WHITE)
+    instr_surf = font.render("Press SPACE to flap, collide to die!", True, WHITE)
+    game_over_surf = font.render("Game Over! Press SPACE to restart", True, RED)
+
+    def reset_game():
+        """Reset the game state for a new attempt."""
+        nonlocal bird, pipes, time_since_last_pipe, game_state
+        bird = Bird()
+        pipes = []
+        time_since_last_pipe = 0.0
+        game_state = GAME_RUNNING
 
     # Create game objects
     bird = Bird()
     ground = Ground()
     pipes = []  # List to hold active pipes
     time_since_last_pipe = 0.0  # Timer for pipe spawning
+    game_state = GAME_RUNNING
 
     running = True
     last_time = pygame.time.get_ticks() / 1000.0
@@ -233,37 +275,48 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key == pygame.K_SPACE:  # Flap on SPACE
-                    bird.flap()
+                elif event.key == pygame.K_SPACE:
+                    if game_state == GAME_RUNNING:
+                        bird.flap()
+                    elif game_state == GAME_OVER:
+                        reset_game()
 
-        # Update
-        bird.update(dt)
-        
-        # Update pipes and spawn new ones
-        time_since_last_pipe += dt
-        if time_since_last_pipe >= PIPE_SPAWN_DELAY:
-            try:
-                pipes.append(Pipe())
-                time_since_last_pipe = 0.0
-            except Exception as e:
-                print(f"Failed to create pipe: {e}")
-                time_since_last_pipe = PIPE_SPAWN_DELAY  # Try again next frame
+        # Update game objects if game is running
+        if game_state == GAME_RUNNING:
+            bird.update(dt)
             
-        # Update and filter out off-screen pipes
-        pipes = [pipe for pipe in pipes if not pipe.is_offscreen()]
-        for pipe in pipes:
-            pipe.update(dt)
+            # Check for collisions
+            if bird.check_collision(pipes, ground):
+                game_state = GAME_OVER
+            
+            # Update pipes and spawn new ones
+            time_since_last_pipe += dt
+            if time_since_last_pipe >= PIPE_SPAWN_DELAY:
+                try:
+                    pipes.append(Pipe())
+                    time_since_last_pipe = 0.0
+                except Exception as e:
+                    print(f"Failed to create pipe: {e}")
+                    time_since_last_pipe = PIPE_SPAWN_DELAY  # Try again next frame
+                
+            # Update and filter out off-screen pipes
+            pipes = [pipe for pipe in pipes if not pipe.is_offscreen()]
+            for pipe in pipes:
+                pipe.update(dt)
 
         # Drawing
         screen.fill(BG_COLOR)
         for pipe in pipes:  # Draw pipes behind bird
             pipe.draw(screen)
-        bird.draw(screen)
+        bird.draw(screen, game_state)
         ground.draw(screen)  # Ground always on top
 
         # UI text on top of everything
         screen.blit(title_surf, (12, 12))
-        screen.blit(instr_surf, (12, 36))
+        if game_state == GAME_RUNNING:
+            screen.blit(instr_surf, (12, 36))
+        else:  # GAME_OVER
+            screen.blit(game_over_surf, (12, 36))
 
         # debug: show assets and sounds folder names and FPS
         debug_surf = font.render(f"assets: {os.path.basename(ASSETS_DIR)}  sounds: {os.path.basename(SOUNDS_DIR)}", True, (240, 240, 240))
