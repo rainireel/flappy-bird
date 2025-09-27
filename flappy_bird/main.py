@@ -5,6 +5,7 @@ Replace this file with later milestones as we add features.
 """
 import os
 import sys
+import math
 import random  # for pipe gap positioning
 import pygame
 
@@ -32,6 +33,8 @@ PIPE_MIN_HEIGHT = 50  # minimum height of pipe
 PIPE_COLOR = (67, 176, 71)  # green color for pipes
 
 # Game states
+GAME_MENU = 'menu'      # Initial menu state
+GAME_READY = 'ready'    # Bird is visible, waiting for first flap
 GAME_RUNNING = 'running'
 GAME_OVER = 'game_over'
 
@@ -39,10 +42,17 @@ GAME_OVER = 'game_over'
 RED = (255, 0, 0)
 WHITE = (255, 255, 255)
 YELLOW = (255, 215, 0)  # Score color
+BLACK = (0, 0, 0)
 
-# Scoring
-SCORE_FONT_SIZE = 48
-DEBUG_FONT_SIZE = 24
+# Fonts
+TITLE_FONT_SIZE = 48
+SCORE_FONT_SIZE = 64
+MENU_FONT_SIZE = 32
+DEBUG_FONT_SIZE = 20
+
+# Animation
+BIRD_IDLE_RANGE = 20  # pixels up/down
+BIRD_IDLE_SPEED = 2   # complete cycles per second
 
 # Ground
 GROUND_HEIGHT = 112
@@ -70,10 +80,12 @@ class Bird:
     def __init__(self, x=BIRD_START_X, y=BIRD_START_Y):
         self.x = float(x)
         self.y = float(y)
+        self.start_y = float(y)  # For menu animation
         self.vel = 0.0  # pixels per second (positive downward)
         self.width = BIRD_WIDTH
         self.height = BIRD_HEIGHT
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
+        self.animation_time = 0.0  # For menu idle animation
         # Try to load an image from assets if present (optional)
         self.image = None
         try:
@@ -83,6 +95,14 @@ class Bird:
                 self.image = pygame.transform.scale(self.image, (self.width, self.height))
         except Exception:
             self.image = None
+
+    def update_menu(self, dt):
+        """Update bird's menu idle animation."""
+        self.animation_time += dt * BIRD_IDLE_SPEED
+        # Smooth sine wave animation
+        offset = math.sin(self.animation_time * 2 * math.pi) * BIRD_IDLE_RANGE
+        self.y = self.start_y + offset
+        self.rect.y = int(self.y)
 
     def update(self, dt):
         """Update bird physics. dt is seconds since last frame."""
@@ -248,21 +268,25 @@ def main():
         sys.exit(1)
 
     # Fonts for different purposes
-    title_font = pygame.font.SysFont(None, DEBUG_FONT_SIZE)
+    title_font = pygame.font.SysFont(None, TITLE_FONT_SIZE)
+    menu_font = pygame.font.SysFont(None, MENU_FONT_SIZE)
     score_font = pygame.font.SysFont(None, SCORE_FONT_SIZE)
+    debug_font = pygame.font.SysFont(None, DEBUG_FONT_SIZE)
     
     # Static text surfaces
-    title_surf = title_font.render("PyFlappy — Step 7 (Scoring)", True, WHITE)
-    instr_surf = title_font.render("Press SPACE to flap! Score points by passing pipes!", True, WHITE)
-    game_over_surf = title_font.render("Game Over! Press SPACE to restart", True, RED)
+    title_surf = title_font.render("PyFlappy", True, WHITE)
+    menu_surf = menu_font.render("Press SPACE to Start", True, WHITE)
+    ready_surf = menu_font.render("READY! Press SPACE to Flap!", True, WHITE)
+    game_over_surf = menu_font.render("Game Over! Press SPACE to Restart", True, RED)
+    menu_quit_surf = debug_font.render("ESC to Quit", True, WHITE)
 
-    def reset_game():
+    def reset_game(to_menu=False):
         """Reset the game state for a new attempt."""
         nonlocal bird, pipes, time_since_last_pipe, game_state, current_score
         bird = Bird()
         pipes = []
         time_since_last_pipe = 0.0
-        game_state = GAME_RUNNING
+        game_state = GAME_MENU if to_menu else GAME_READY
         current_score = 0
 
     # Create game objects and score tracking
@@ -270,7 +294,7 @@ def main():
     ground = Ground()
     pipes = []  # List to hold active pipes
     time_since_last_pipe = 0.0  # Timer for pipe spawning
-    game_state = GAME_RUNNING
+    game_state = GAME_MENU  # Start in menu state
     current_score = 0
     best_score = 0  # Best score this session
 
@@ -288,13 +312,20 @@ def main():
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_SPACE:
-                    if game_state == GAME_RUNNING:
+                    if game_state == GAME_MENU:
+                        game_state = GAME_READY
+                    elif game_state == GAME_READY:
+                        game_state = GAME_RUNNING
+                        bird.flap()  # Initial flap
+                    elif game_state == GAME_RUNNING:
                         bird.flap()
                     elif game_state == GAME_OVER:
-                        reset_game()
+                        reset_game(to_menu=True)
 
-        # Update game objects if game is running
-        if game_state == GAME_RUNNING:
+        # Update game objects based on state
+        if game_state == GAME_MENU or game_state == GAME_READY:
+            bird.update_menu(dt)
+        elif game_state == GAME_RUNNING:
             bird.update(dt)
             
             # Check for collisions
@@ -331,28 +362,51 @@ def main():
         bird.draw(screen, game_state)
         ground.draw(screen)  # Ground always on top
 
-        # Score display (centered, large)
-        score_text = str(current_score)
-        score_surf = score_font.render(score_text, True, YELLOW)
-        score_rect = score_surf.get_rect(center=(SCREEN_WIDTH // 2, 50))
-        screen.blit(score_surf, score_rect)
+        # Always show title at top
+        title_rect = title_surf.get_rect(midtop=(SCREEN_WIDTH // 2, 20))
+        screen.blit(title_surf, title_rect)
 
-        # UI text
-        screen.blit(title_surf, (12, 12))
-        if game_state == GAME_RUNNING:
-            screen.blit(instr_surf, (12, SCREEN_HEIGHT - 36))
-        else:  # GAME_OVER
-            # Show game over text and best score
-            screen.blit(game_over_surf, (12, 100))
-            best_score_surf = title_font.render(f"Best Score: {best_score}", True, YELLOW)
-            screen.blit(best_score_surf, (12, 140))
+        # State-specific UI
+        if game_state == GAME_MENU:
+            # Center the "Press SPACE to Start" text
+            menu_rect = menu_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+            screen.blit(menu_surf, menu_rect)
+            # Show quit instruction at bottom
+            quit_rect = menu_quit_surf.get_rect(midbottom=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 20))
+            screen.blit(menu_quit_surf, quit_rect)
 
-        # Debug info at bottom
-        debug_surf = title_font.render(
+        elif game_state == GAME_READY:
+            ready_rect = ready_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+            screen.blit(ready_surf, ready_rect)
+
+        elif game_state == GAME_RUNNING:
+            # Score display (centered, large)
+            score_text = str(current_score)
+            score_surf = score_font.render(score_text, True, YELLOW)
+            score_rect = score_surf.get_rect(center=(SCREEN_WIDTH // 2, 80))
+            screen.blit(score_surf, score_rect)
+
+        elif game_state == GAME_OVER:
+            # Show game over text
+            game_over_rect = game_over_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50))
+            screen.blit(game_over_surf, game_over_rect)
+            
+            # Show final and best scores
+            final_score_surf = menu_font.render(f"Score: {current_score}", True, WHITE)
+            best_score_surf = menu_font.render(f"Best: {best_score}", True, YELLOW)
+            
+            final_score_rect = final_score_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 10))
+            best_score_rect = best_score_surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50))
+            
+            screen.blit(final_score_surf, final_score_rect)
+            screen.blit(best_score_surf, best_score_rect)
+
+        # Debug info at bottom-left
+        debug_surf = debug_font.render(
             f"assets: {os.path.basename(ASSETS_DIR)}  sounds: {os.path.basename(SOUNDS_DIR)}", 
             True, (240, 240, 240)
         )
-        fps_surf = title_font.render(f"FPS: {int(clock.get_fps())}", True, (240, 240, 240))
+        fps_surf = debug_font.render(f"FPS: {int(clock.get_fps())}", True, (240, 240, 240))
         screen.blit(debug_surf, (12, SCREEN_HEIGHT - 36))
         screen.blit(fps_surf, (SCREEN_WIDTH - 100, SCREEN_HEIGHT - 36))
 
